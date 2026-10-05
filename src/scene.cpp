@@ -310,6 +310,7 @@ void Scene::loadFromJSON(const std::string& jsonName)
         else if (p["TYPE"] == "Specular")
         {
             const auto& col = p["RGB"];
+            newMaterial.hasReflective = 1.0f;
             newMaterial.color = glm::vec3(col[0], col[1], col[2]);
         }
         MatNameToID[name] = materials.size();
