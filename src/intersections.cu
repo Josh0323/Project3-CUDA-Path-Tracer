@@ -111,3 +111,60 @@ __host__ __device__ float sphereIntersectionTest(
 
     return glm::length(r.origin - intersectionPoint);
 }
+
+__host__ __device__ static float finishMeshHit(
+    const Triangle& tri,
+    const Ray& r,
+    float t,
+    const glm::vec2& bary,
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    bool& outside) {
+    glm::vec3 geometricNormal = glm::cross(tri.v1 - tri.v0, tri.v2 - tri.v0);
+    if (glm::dot(geometricNormal, r.direction) > 0.0f) {
+        geometricNormal = -geometricNormal;
+    }
+
+    glm::vec3 shadingNormal = (1.0f - bary.x - bary.y) * tri.n0 + bary.x * tri.n1 + bary.y * tri.n2;
+    if (!(glm::dot(shadingNormal, shadingNormal) > 0.0f)) {
+        shadingNormal = geometricNormal;
+    }
+    shadingNormal = glm::normalize(shadingNormal);
+
+    outside = glm::dot(shadingNormal, r.direction) < 0.0f;
+    if (glm::dot(shadingNormal, geometricNormal) < 0.0f) {
+        shadingNormal = -shadingNormal;
+    }
+    normal = shadingNormal;
+
+    intersectionPoint = getPointOnRay(r, t);
+    return glm::length(r.origin - intersectionPoint);
+}
+
+__host__ __device__ float meshIntersectionTest(
+    const Geom& mesh,
+    const Triangle* triangles,
+    Ray r,
+    glm::vec3& intersectionPoint,
+    glm::vec3& normal,
+    bool& outside) {
+    r.direction = glm::normalize(r.direction);
+
+    float tClosest = FLT_MAX;
+    int closest = -1;
+    glm::vec2 closestBary;
+    for (int i = mesh.triangleStart; i < mesh.triangleStart + mesh.triangleCount; i++) {
+        glm::vec2 bary;
+        const float t = triangleIntersectionTest(triangles[i], r, bary);
+        if (t > 0.0f && t < tClosest) {
+            tClosest = t;
+            closest = i;
+            closestBary = bary;
+        }
+    }
+
+    if (closest < 0) {
+        return -1;
+    }
+    return finishMeshHit(triangles[closest], r, tClosest, closestBary, intersectionPoint, normal, outside);
+}
