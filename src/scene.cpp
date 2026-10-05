@@ -6,6 +6,12 @@
 #include <glm/gtx/string_cast.hpp>
 #include "json.hpp"
 
+#define TINYGLTF_IMPLEMENTATION
+#define TINYGLTF_NO_STB_IMAGE
+#define TINYGLTF_NO_STB_IMAGE_WRITE
+#define TINYGLTF_NO_EXTERNAL_IMAGE
+#include "tiny_gltf.h"
+
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -13,6 +19,11 @@
 
 using namespace std;
 using json = nlohmann::json;
+
+static bool skipImage(tinygltf::Image*, const int, std::string*, std::string*,
+int, int, const unsigned char*, int, void*) {
+    return true;
+}
 
 Scene::Scene(string filename)
 {
@@ -31,10 +42,40 @@ Scene::Scene(string filename)
     }
 }
 
+void Scene::loadGLTF(const std::string& filename, Geom& mesh)
+{
+    tinygltf::Model model;
+    tinygltf::TinyGLTF loader;
+    loader.SetImageLoader(skipImage, nullptr);
+
+    std::string err;
+    std::string warn;
+    const size_t dot = filename.find_last_of('.');
+    const bool binary = dot != std::string::npos && filename.substr(dot) == ".glb";
+    const bool loaded = binary
+        ? loader.LoadBinaryFromFile(&model, &err, &warn, filename)
+        : loader.LoadASCIIFromFile(&model, &err, &warn, filename);
+    if (!warn.empty()) {
+        cout << "glTF warning in " << filename << ": " << warn << endl;
+    }
+    if (!loaded) {
+        cout << "Couldn't read glTF from " << filename << ": " << err << endl;
+        exit(-1);
+    }
+
+    cout << "Opened " << filename << ": " << model.meshes.size() << " meshes, "
+        << model.nodes.size() << " nodes" << endl;
+}
+
 void Scene::loadFromJSON(const std::string& jsonName)
 {
     std::ifstream f(jsonName);
     json data = json::parse(f);
+
+    // we run from renders/ with ../scenes/*.json so the model path needs ../scenes/ in front.
+    const size_t lastSlash = jsonName.find_last_of("/\\");
+    const std::string sceneDirectory = lastSlash == std::string::npos ? "" : jsonName.substr(0, lastSlash + 1);
+
     const auto& materialsData = data["Materials"];
     std::unordered_map<std::string, uint32_t> MatNameToID;
     for (const auto& item : materialsData.items())
@@ -66,10 +107,13 @@ void Scene::loadFromJSON(const std::string& jsonName)
     for (const auto& p : objectsData)
     {
         const auto& type = p["TYPE"];
-        Geom newGeom;
+        Geom newGeom{};
         if (type == "cube")
         {
             newGeom.type = CUBE;
+        }
+        else if (type == "gltf") {
+            newGeom.type = MESH;
         }
         else
         {
@@ -86,6 +130,10 @@ void Scene::loadFromJSON(const std::string& jsonName)
             newGeom.translation, newGeom.rotation, newGeom.scale);
         newGeom.inverseTransform = glm::inverse(newGeom.transform);
         newGeom.invTranspose = glm::inverseTranspose(newGeom.transform);
+
+        if (newGeom.type == MESH) {
+            loadGLTF(sceneDirectory + p["FILE"].get<std::string>(), newGeom);
+        }
 
         geoms.push_back(newGeom);
     }
