@@ -26,7 +26,7 @@
 #define SORT_BY_MATERIAL 1
 #define ANTIALIASING 1
 // this is for the analysis I'll put in README: collecting how many paths survive each bounce
-#define PRINT_PATHS_PER_BOUNCE 1
+#define PRINT_PATHS_PER_BOUNCE 0
 
 void checkCUDAErrorFn(const char* msg, const char* file, int line)
 {
