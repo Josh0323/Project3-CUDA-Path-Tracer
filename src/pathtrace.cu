@@ -29,6 +29,7 @@
 #define PRINT_PATHS_PER_BOUNCE 0
 #define MESH_BOUNDS_CULLING 1
 #define BVH_ACCELERATION 1
+#define RUSSIAN_ROULETTE 1
 
 void checkCUDAErrorFn(const char* msg, const char* file, int line)
 {
@@ -320,6 +321,19 @@ __global__ void shadeMaterial(
                 if (pathSegments[idx].remainingBounces <= 0) {
                     pathSegments[idx].color = glm::vec3(0.0f);
                 }
+#if RUSSIAN_ROULETTE
+                else {
+                    glm::vec3 c = pathSegments[idx].color;
+                    float survive = glm::min(glm::max(c.r, glm::max(c.g, c.b)), 1.0f);
+                    thrust::uniform_real_distribution<float> u01(0, 1);
+                    if (u01(rng) < survive) {
+                        pathSegments[idx].color /= survive;
+                    } else {
+                        pathSegments[idx].color = glm::vec3(0.0f);
+                        pathSegments[idx].remainingBounces = 0;
+                    }
+                }
+#endif
             }
             // If there was no intersection, color the ray black.
             // Lots of renderers use 4 channel color, RGBA, where A = alpha, often
