@@ -25,6 +25,8 @@
 #define STREAM_COMPACTION 1
 #define SORT_BY_MATERIAL 1
 #define ANTIALIASING 1
+// this is for the analysis I'll put in README: collecting how many paths survive each bounce
+#define PRINT_PATHS_PER_BOUNCE 1
 
 void checkCUDAErrorFn(const char* msg, const char* file, int line)
 {
@@ -151,7 +153,7 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
         PathSegment& segment = pathSegments[index];
 
 #if ANTIALIASING
-        thrust::default_random_engine rng = makeSeededRandomEngine(iter, segment.pixelIndex, segment.remainingBounces);
+        thrust::default_random_engine rng = makeSeededRandomEngine(iter, index, 0);
         thrust::uniform_real_distribution<float> u01(0, 1);
         float jitterX = u01(rng);
         float jitterY = u01(rng);
@@ -431,6 +433,11 @@ void pathtrace(uchar4* pbo, int frame, int iter)
 #if STREAM_COMPACTION
         PathSegment* new_end = thrust::stable_partition(thrust::device, dev_paths, dev_paths + num_paths, pathIsAlive());
         num_paths = new_end - dev_paths;
+        #if PRINT_PATHS_PER_BOUNCE
+                if (iter == 1) {
+                    printf("Depth %d: %d of %d paths remaining.\n", depth, num_paths, pixelcount);
+                }
+        #endif
 #endif
 
         if (guiData != NULL)
