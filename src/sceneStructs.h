@@ -34,6 +34,8 @@ struct Geom
     glm::mat4 invTranspose;
     int triangleStart;
     int triangleCount;
+    glm::vec3 boundsMin;
+    glm::vec3 boundsMax;
 };
 
 struct Triangle

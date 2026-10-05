@@ -27,6 +27,7 @@
 #define ANTIALIASING 1
 // this is for the analysis I'll put in README: collecting how many paths survive each bounce
 #define PRINT_PATHS_PER_BOUNCE 0
+#define MESH_BOUNDS_CULLING 1
 
 void checkCUDAErrorFn(const char* msg, const char* file, int line)
 {
@@ -208,7 +209,9 @@ __global__ void computeIntersections(
 
         glm::vec3 tmp_intersect;
         glm::vec3 tmp_normal;
-
+#if MESH_BOUNDS_CULLING
+        const glm::vec3 invDirection = 1.0f / glm::normalize(pathSegment.ray.direction);
+#endif
         // naive parse through global geoms
 
         for (int i = 0; i < geoms_size; i++)
@@ -224,6 +227,11 @@ __global__ void computeIntersections(
                 t = sphereIntersectionTest(geom, pathSegment.ray, tmp_intersect, tmp_normal, outside);
             }
             else if (geom.type == MESH) {
+#if MESH_BOUNDS_CULLING
+                if (aabbIntersectionTest(geom.boundsMin, geom.boundsMax, pathSegment.ray.origin, invDirection, t_min) < 0.0f) {
+                    continue;
+                }
+#endif
                 t = meshIntersectionTest(geom, triangles, pathSegment.ray, tmp_intersect, tmp_normal, outside);
             }
             // TODO: add more intersection tests here... triangle? metaball? CSG?

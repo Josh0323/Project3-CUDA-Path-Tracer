@@ -268,15 +268,15 @@ void Scene::loadGLTF(const std::string& filename, Geom& mesh)
         cout << "Warning: glTF file " << filename << " contains no triangles" << endl;
         return;
     }
-    glm::vec3 boundsMin(FLT_MAX);
-    glm::vec3 boundsMax(-FLT_MAX);
+    mesh.boundsMin = glm::vec3(FLT_MAX);
+    mesh.boundsMax = glm::vec3(-FLT_MAX);
     for (int i = mesh.triangleStart; i < mesh.triangleStart + mesh.triangleCount; i++) {
         const Triangle& tri = triangles[i];
-        boundsMin = glm::min(boundsMin, glm::min(tri.v0, glm::min(tri.v1, tri.v2)));
-        boundsMax = glm::max(boundsMax, glm::max(tri.v0, glm::max(tri.v1, tri.v2)));
+        mesh.boundsMin = glm::min(mesh.boundsMin, glm::min(tri.v0, glm::min(tri.v1, tri.v2)));
+        mesh.boundsMax = glm::max(mesh.boundsMax, glm::max(tri.v0, glm::max(tri.v1, tri.v2)));
     }
     cout << "Loaded " << filename << ": " << mesh.triangleCount << "triangles, bounds "
-        << glm::to_string(boundsMin) << " to " << glm::to_string(boundsMax) << endl;
+        << glm::to_string(mesh.boundsMin) << " to " << glm::to_string(mesh.boundsMax) << endl;
 }
 
 void Scene::loadFromJSON(const std::string& jsonName)
