@@ -16,13 +16,154 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <cstring>
 
 using namespace std;
 using json = nlohmann::json;
 
+// tinygltf won't load a file with embedded images unless it has an image loader..
+// I don't use textures yet so this one just says ok
 static bool skipImage(tinygltf::Image*, const int, std::string*, std::string*,
 int, int, const unsigned char*, int, void*) {
     return true;
+}
+
+static const unsigned char* accessorData(const tinygltf::Model& model, const tinygltf::Accessor& accessor, size_t elementSize, int& stride) {
+    if (accessor.bufferView < 0 || accessor.sparse.isSparse || accessor.count == 0) {
+        return nullptr;
+    }
+
+    const tinygltf::BufferView& view = model.bufferViews[accessor.bufferView];
+    const tinygltf::Buffer& buffer = model.buffers[view.buffer];
+    stride = accessor.ByteStride(view);
+    const size_t start = view.byteOffset + accessor.byteOffset;
+    if (stride <= 0 || start + (accessor.count - 1) * stride + elementSize > buffer.data.size()) {
+        return nullptr;
+    }
+    return buffer.data.data() + start;
+}
+
+// reads the i-th vec3 out of the raw bytes
+static glm::vec3 readVec3(const unsigned char* data, int stride, size_t i) {
+    glm::vec3 v;
+    memcpy(&v, data + i * stride, sizeof(glm::vec3));
+    return v;
+}
+
+// how many bytes one index takes, 0 means an index type i don't support
+static size_t componentSize(int componentType) {
+    switch (componentType) {
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE: return 1;
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT: return 2;
+        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT: return 4;
+        default: return 0;
+    }
+}
+
+static uint32_t readIndex(const unsigned char* data, int stride, int componentType, size_t i) {
+    const unsigned char* p = data + i * stride;
+    if (componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+        return *p;
+    }
+    if (componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+        uint16_t index;
+        memcpy(&index, p, sizeof(index));
+        return index;
+    }
+    uint32_t index;
+    memcpy(&index, p, sizeof(index));
+    return index;
+}
+
+// turns one glTF primitive into world-space triangles and adds them to the list
+static void appendPrimitive(const tinygltf::Model& model, const tinygltf::Primitive& primitive, const glm::mat4& transform, vector<Triangle>& triangles) {
+    if (primitive.mode != TINYGLTF_MODE_TRIANGLES) {
+        cout << "Skipping a glTF primitive that is not a triangle list (mode )"
+            << primitive.mode << endl;
+        return;
+    }
+
+    const auto positionAttribute = primitive.attributes.find("POSITION");
+    if (positionAttribute == primitive.attributes.end()) {
+        return;
+    }
+    const tinygltf::Accessor& positionAccessor = model.accessors[positionAttribute->second];
+    int positionStride = 0;
+    const unsigned char* positions = nullptr;
+    if (positionAccessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT && positionAccessor.type == TINYGLTF_TYPE_VEC3) {
+        positions = accessorData(model, positionAccessor, sizeof(glm::vec3), positionStride);
+    }
+    if (positions == nullptr) {
+        cout << "Skipping a glTF primitive with unsupported vertex positions" << endl;
+        return;
+    }
+
+    int normalStride = 0;
+    const unsigned char* normals = nullptr;
+    const auto normalAttribute = primitive.attributes.find("NORMAL");
+    if (normalAttribute != primitive.attributes.end()) {
+        const tinygltf::Accessor& normalAccessor = model.accessors[normalAttribute->second];
+        if (normalAccessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT
+            && normalAccessor.type == TINYGLTF_TYPE_VEC3
+            && normalAccessor.count == positionAccessor.count) {
+                normals = accessorData(model, normalAccessor, sizeof(glm::vec3), normalStride);
+            }
+    }
+
+    int indexStride = 0;
+    int indexType = 0;
+    const unsigned char* indices = nullptr;
+    size_t vertexCount = positionAccessor.count;
+    if (primitive.indices >= 0) {
+        const tinygltf::Accessor& indexAccessor = model.accessors[primitive.indices];
+        indexType = indexAccessor.componentType;
+        if (indexAccessor.type == TINYGLTF_TYPE_SCALAR && componentSize(indexType) != 0) {
+            indices = accessorData(model, indexAccessor, componentSize(indexType), indexStride);
+        }
+        if (indices == nullptr) {
+            cout << "Skipping a glTF primitive with unsupporte indices" << endl;
+            return;
+        }
+        vertexCount = indexAccessor.count;
+    }
+
+    // building the triangles
+    const glm::mat3 normalTransform = glm::inverseTranspose(glm::mat3(transform));
+    const float winding = glm::determinant(glm::mat3(transform)) < 0.0f ? -1.0f : 1.0f;
+
+    for (size_t i = 0; i + 2 < vertexCount; i += 3) {
+        uint32_t index[3];
+        bool inRange = true;
+        for (int k = 0; k < 3; k++) {
+            index[k] = indices ? readIndex(indices, indexStride, indexType, i + k) : (uint32_t)(i + k);
+            inRange = inRange && index[k] < positionAccessor.count;
+        }
+        if (!inRange) {
+            continue;
+        }
+
+        Triangle tri;
+        tri.v0 = glm::vec3(transform * glm::vec4(readVec3(positions, positionStride, index[0]), 1.0f));
+        tri.v1 = glm::vec3(transform * glm::vec4(readVec3(positions, positionStride, index[1]), 1.0f));
+        tri.v2 = glm::vec3(transform * glm::vec4(readVec3(positions, positionStride, index[2]), 1.0f));
+
+        glm::vec3 faceNormal = glm::cross(tri.v1 - tri.v0, tri.v2 - tri.v0);
+        if (!(glm::dot(faceNormal, faceNormal) > 0.0f)) {
+            continue;
+        }
+        faceNormal = winding * glm::normalize(faceNormal);
+
+        glm::vec3 n[3];
+        for (int k = 0; k < 3; k++) {
+            n[k] = normals ? normalTransform * readVec3(normals, normalStride, index[k]) : faceNormal;
+            n[k] = glm::dot(n[k], n[k]) > 0.0f ? glm::normalize(n[k]) : faceNormal;
+        }
+        tri.n0 = n[0];
+        tri.n1 = n[1];
+        tri.n2 = n[2];
+
+        triangles.push_back(tri);
+    }
 }
 
 Scene::Scene(string filename)
