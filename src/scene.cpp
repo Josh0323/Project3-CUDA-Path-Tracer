@@ -263,7 +263,7 @@ void Scene::loadGLTF(const std::string& filename, Geom& mesh)
         }
     }
     mesh.triangleCount = triangles.size() - mesh.triangleStart;
-
+    mesh.bvhRoot = buildBVH(triangles, mesh.triangleStart, mesh.triangleCount, bvhNodes);
     if (mesh.triangleCount == 0) {
         cout << "Warning: glTF file " << filename << " contains no triangles" << endl;
         return;

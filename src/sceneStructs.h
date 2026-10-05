@@ -36,6 +36,7 @@ struct Geom
     int triangleCount;
     glm::vec3 boundsMin;
     glm::vec3 boundsMax;
+    int bvhRoot;
 };
 
 struct Triangle
