@@ -5,6 +5,9 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtx/string_cast.hpp>
 #include "json.hpp"
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #define TINYGLTF_IMPLEMENTATION
 #define TINYGLTF_NO_STB_IMAGE
@@ -17,6 +20,7 @@
 #include <string>
 #include <unordered_map>
 #include <cstring>
+#include <cfloat>
 
 using namespace std;
 using json = nlohmann::json;
@@ -166,6 +170,47 @@ static void appendPrimitive(const tinygltf::Model& model, const tinygltf::Primit
     }
 }
 
+static glm::mat4 nodeTransform(const tinygltf::Node& node) {
+    if (node.matrix.size() == 16) {
+        return glm::mat4(glm::make_mat4(node.matrix.data()));
+    }
+
+    glm::mat4 transform(1.0f);
+    if (node.translation.size() == 3) {
+        transform = glm::translate(transform, glm::vec3(node.translation[0],
+        node.translation[1], node.translation[2]));
+    }
+    if (node.rotation.size() == 4) {
+        const glm::quat rotation(
+            (float)node.rotation[3], (float)node.rotation[0],
+            (float)node.rotation[1], (float)node.rotation[2]);
+        transform *= glm::mat4_cast(rotation);
+    }
+    if (node.scale.size() == 3) {
+        transform = glm::scale(transform,
+        glm:: vec3(node.scale[0], node.scale[1], node.scale[2]));
+    }
+    return transform;
+}
+
+static void appendNode(const tinygltf::Model& model, int nodeIndex,
+    const glm::mat4& parentTransform, vector<Triangle>& triangles) {
+    if (nodeIndex < 0 || nodeIndex >= (int)model.nodes.size()) {
+        return;
+    }
+
+    const tinygltf::Node& node = model.nodes[nodeIndex];
+    const glm::mat4 transform = parentTransform * nodeTransform(node);
+    if (node.mesh >= 0 && node.mesh < (int)model.meshes.size()) {
+        for (const tinygltf::Primitive& primitive : model.meshes[node.mesh].primitives) {
+            appendPrimitive(model, primitive, transform, triangles);
+        }
+    }
+    for (int child : node.children) {
+        appendNode(model, child, transform, triangles);
+    }
+}
+
 Scene::Scene(string filename)
 {
     cout << "Reading scene from " << filename << " ..." << endl;
@@ -204,8 +249,34 @@ void Scene::loadGLTF(const std::string& filename, Geom& mesh)
         exit(-1);
     }
 
-    cout << "Opened " << filename << ": " << model.meshes.size() << " meshes, "
-        << model.nodes.size() << " nodes" << endl;
+    mesh.triangleStart = triangles.size();
+    if (model.scenes.empty()) {
+        for (const tinygltf::Mesh& gltfMesh : model.meshes) {
+            for (const tinygltf::Primitive& primitive : gltfMesh.primitives) {
+                appendPrimitive(model, primitive, mesh.transform, triangles);
+            }
+        }
+    } else {
+        const int sceneIndex = model.defaultScene >= 0 ? model.defaultScene : 0;
+        for (int node : model.scenes[sceneIndex].nodes) {
+            appendNode(model, node, mesh.transform, triangles);
+        }
+    }
+    mesh.triangleCount = triangles.size() - mesh.triangleStart;
+
+    if (mesh.triangleCount == 0) {
+        cout << "Warning: glTF file " << filename << " contains no triangles" << endl;
+        return;
+    }
+    glm::vec3 boundsMin(FLT_MAX);
+    glm::vec3 boundsMax(-FLT_MAX);
+    for (int i = mesh.triangleStart; i < mesh.triangleStart + mesh.triangleCount; i++) {
+        const Triangle& tri = triangles[i];
+        boundsMin = glm::min(boundsMin, glm::min(tri.v0, glm::min(tri.v1, tri.v2)));
+        boundsMax = glm::max(boundsMax, glm::max(tri.v0, glm::max(tri.v1, tri.v2)));
+    }
+    cout << "Loaded " << filename << ": " << mesh.triangleCount << "triangles, bounds "
+        << glm::to_string(boundsMin) << " to " << glm::to_string(boundsMax) << endl;
 }
 
 void Scene::loadFromJSON(const std::string& jsonName)
