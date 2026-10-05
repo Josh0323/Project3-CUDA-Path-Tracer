@@ -28,6 +28,7 @@
 // this is for the analysis I'll put in README: collecting how many paths survive each bounce
 #define PRINT_PATHS_PER_BOUNCE 0
 #define MESH_BOUNDS_CULLING 1
+#define BVH_ACCELERATION 1
 
 void checkCUDAErrorFn(const char* msg, const char* file, int line)
 {
@@ -93,6 +94,7 @@ static ShadeableIntersection* dev_intersections = NULL;
 // TODO: static variables for device memory, any extra info you need, etc
 // ...
 static Triangle* dev_triangles = NULL;
+static BVHNode* dev_bvhNodes = NULL;
 
 void InitDataContainer(GuiDataContainer* imGuiData)
 {
@@ -124,6 +126,8 @@ void pathtraceInit(Scene* scene)
     cudaMalloc(&dev_triangles, scene->triangles.size() * sizeof(Triangle));
     cudaMemcpy(dev_triangles, scene->triangles.data(), scene->triangles.size() * sizeof(Triangle), cudaMemcpyHostToDevice);
 
+    cudaMalloc(&dev_bvhNodes, scene->bvhNodes.size() * sizeof(BVHNode));
+    cudaMemcpy(dev_bvhNodes, scene->bvhNodes.data(), scene->bvhNodes.size() * sizeof(BVHNode), cudaMemcpyHostToDevice);
     checkCUDAError("pathtraceInit");
 }
 
@@ -136,6 +140,7 @@ void pathtraceFree()
     cudaFree(dev_intersections);
     // TODO: clean up any extra device memory you created
     cudaFree(dev_triangles);
+    cudaFree(dev_bvhNodes);
 
     checkCUDAError("pathtraceFree");
 }
@@ -192,6 +197,7 @@ __global__ void computeIntersections(
     Geom* geoms,
     int geoms_size,
     Triangle* triangles,
+    BVHNode* bvhNodes,
     ShadeableIntersection* intersections)
 {
     int path_index = blockIdx.x * blockDim.x + threadIdx.x;
@@ -209,7 +215,7 @@ __global__ void computeIntersections(
 
         glm::vec3 tmp_intersect;
         glm::vec3 tmp_normal;
-#if MESH_BOUNDS_CULLING
+#if MESH_BOUNDS_CULLING && !BVH_ACCELERATION
         const glm::vec3 invDirection = 1.0f / glm::normalize(pathSegment.ray.direction);
 #endif
         // naive parse through global geoms
@@ -227,12 +233,16 @@ __global__ void computeIntersections(
                 t = sphereIntersectionTest(geom, pathSegment.ray, tmp_intersect, tmp_normal, outside);
             }
             else if (geom.type == MESH) {
+#if BVH_ACCELERATION
+                t = meshIntersectionTestBVH(geom, triangles, bvhNodes, pathSegment.ray, t_min, tmp_intersect, tmp_normal, outside);
+#else
 #if MESH_BOUNDS_CULLING
                 if (aabbIntersectionTest(geom.boundsMin, geom.boundsMax, pathSegment.ray.origin, invDirection, t_min) < 0.0f) {
                     continue;
                 }
 #endif
                 t = meshIntersectionTest(geom, triangles, pathSegment.ray, tmp_intersect, tmp_normal, outside);
+#endif
             }
             // TODO: add more intersection tests here... triangle? metaball? CSG?
 
@@ -423,6 +433,7 @@ void pathtrace(uchar4* pbo, int frame, int iter)
             dev_geoms,
             hst_scene->geoms.size(),
             dev_triangles,
+            dev_bvhNodes,
             dev_intersections
         );
         checkCUDAError("trace one bounce");
