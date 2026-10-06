@@ -182,6 +182,20 @@ __global__ void generateRayFromCamera(Camera cam, int iter, int traceDepth, Path
             - cam.up * cam.pixelLength.y * ((float)(y + jitterY) - (float)cam.resolution.y * 0.5f)
         );
 
+        //the lens for the depth of field
+        if (cam.lensRadius > 0.0f && cam.focalDistance > 0.0f) {
+            thrust::default_random_engine lensRng = makeSeededRandomEngine(iter, index, traceDepth + 1);
+            thrust::uniform_real_distribution<float> lens01(0, 1);
+            float r =cam.lensRadius * sqrtf(lens01(lensRng));
+            float theta = TWO_PI * lens01(lensRng);
+
+            float focusT = cam.focalDistance / glm::dot(segment.ray.direction, cam.view);
+            glm::vec3 focusPoint = cam.position + segment.ray.direction * focusT;
+
+            segment.ray.origin = cam.position + cam.right * (r * cosf(theta)) + cam.up * (r * sinf(theta));
+            segment.ray.direction = glm::normalize(focusPoint - segment.ray.origin);
+        }
+
         segment.pixelIndex = index;
         segment.remainingBounces = traceDepth;
     }
