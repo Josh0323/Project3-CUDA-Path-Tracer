@@ -23,7 +23,7 @@
 #define checkCUDAError(msg) checkCUDAErrorFn(msg, FILENAME, __LINE__)
 
 #define STREAM_COMPACTION 1
-#define SORT_BY_MATERIAL 1
+#define SORT_BY_MATERIAL 0
 #define ANTIALIASING 1
 // this is for the analysis I'll put in README: collecting how many paths survive each bounce
 #define PRINT_PATHS_PER_BOUNCE 0
